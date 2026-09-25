@@ -1,0 +1,11 @@
+La thermodynamique est une branche de la physique qui étudie les transformations de l'énergie et les échanges de chaleur.
+
+La première loi de la thermodynamique exprime la conservation de l'énergie.
+
+Elle établit une relation entre la chaleur, le travail et la variation d'énergie interne.
+
+La deuxième loi de la thermodynamique introduit la notion d'entropie.
+
+Elle permet notamment de déterminer le sens d'évolution de certaines transformations.
+
+L'entropie est une grandeur physique importante en thermodynamique.

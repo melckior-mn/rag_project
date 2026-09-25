@@ -11,5 +11,3 @@ print("NumPy :", numpy.__version__)
 print("Pandas :", pandas.__version__)
 
 load_dotenv()
-
-print("\n✅ Environnement RAG opérationnel !")
