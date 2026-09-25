@@ -29,8 +29,8 @@ if "messages" not in st.session_state:
 with st.sidebar:
     st.header("📂 Vos Documents")
     fichiers_uploadees = st.file_uploader(
-        "Déposez vos fichiers (PDF, TXT)",
-        type=["pdf", "txt"],
+        "Déposez vos fichiers (PDF, TXT, DOCX, XLSX)",
+        type=["pdf", "txt", "docx", "xlsx"],
         accept_multiple_files=True
     )
     
@@ -95,4 +95,3 @@ if question := st.chat_input("Posez votre question sur les documents..."):
                     "contexte": resultat["contexte"]
                 })
 
-                
