@@ -1,5 +1,0 @@
-Un graphe est une structure mathématique composée de sommets et d'arêtes.
-
-Les graphes permettent de représenter des relations entre différents objets.
-
-Un graphe peut être orienté ou non orienté.
