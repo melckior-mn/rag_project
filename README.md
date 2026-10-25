@@ -19,3 +19,19 @@ Un chatbot intelligent basé sur le RAG (Retrieval-Augmented Generation) permett
    ```bash
    git clone [https://github.com/melckior-mn/rag_project.git](https://github.com/melckior-mn/rag_project.git)
    cd rag_project
+2. Installez les dépendances :
+   ```bash
+   pip install -r requirements.txt
+3. Créez un fichier .env à la racine et configurez vos clés :
+   ```bash
+   SUPABASE_URL="votre_url_supabase"
+   SUPABASE_KEY="votre_cle_supabase"
+   OPENAI_API_KEY="votre_cle_openai"
+4. Lancez l'application :
+   ```bash
+   streamlit run app.py
+
+Une fois le fichier créé en local, il vous suffira de faire un dernier petit `git push` pour l'ajouter proprement sur votre GitHub !
+
+📄 Licence
+Ce projet est sous licence MIT. Voir le fichier LICENSE pour plus de détails.
