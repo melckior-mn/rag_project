@@ -1,19 +1,32 @@
-import sys
+import io
 from pathlib import Path
+import sys
+import uuid
 
 sys.path.append(str(Path(__file__).resolve().parent))
 
 import streamlit as st
 from src.auth import afficher_interface_auth
-from src.chat_history import charger_historique_chat, sauvegarder_message
+from src.chat_history import (
+    charger_conversations_utilisateur,
+    charger_messages_session,
+    sauvegarder_message,
+)
 from src.document_loader import extraire_texte_fichier
 from src.pipeline import RAGPipeline
+from src.storage import (
+    lister_fichiers_utilisateur,
+    supprimer_fichier_supabase,
+    telecharger_texte_fichier_supabase,
+    uploader_fichier_supabase,
+)
 
 st.set_page_config(
-    page_title="ChatBot RAG - Analyse Documentaire",
-    page_icon="💬",
-    layout="wide",
+    page_title="ChatBot RAG",
+    page_icon="🤖",
+    layout="wide"
 )
+
 
 def appliquer_style_moderne():
   st.markdown(
@@ -97,34 +110,55 @@ def appliquer_style_moderne():
       unsafe_allow_html=True,
   )
 
+
 appliquer_style_moderne()
 
-# 1. Authentification Supabase
+# 1. Authentification
 est_connecte = afficher_interface_auth()
 
 if not est_connecte:
   st.stop()
 
-# 2. Informations utilisateur
+# 2. Utilisateur et Session
 user_id = st.session_state["user"].id
 user_email = st.session_state["user"].email
+
+# Initialisation d'un identifiant de session unique
+if "current_session_id" not in st.session_state:
+  st.session_state.current_session_id = str(uuid.uuid4())
+
 
 @st.cache_resource
 def charger_pipeline():
   return RAGPipeline()
+
 
 pipeline = charger_pipeline()
 
 st.title("💬 ChatBot RAG Multi-Documents")
 st.caption(f"Espace de travail sécurisé de : `{user_email}`")
 
-# 3. Chargement de l'historique
-if "messages" not in st.session_state or st.session_state.get("current_user_id") != user_id:
-  st.session_state.messages = charger_historique_chat(user_id)
+# Chargement de la session active
+if (
+    "messages" not in st.session_state
+    or st.session_state.get("current_user_id") != user_id
+):
+  st.session_state.messages = charger_messages_session(
+      user_id, st.session_state.current_session_id
+  )
   st.session_state.current_user_id = user_id
 
-# Barre latérale
+# ---------------------------------------------------------
+# SIDEBAR
+# ---------------------------------------------------------
 with st.sidebar:
+  # Bouton pour créer un nouveau chat
+  if st.button("➕ Nouvelle discussion", use_container_width=True):
+    st.session_state.current_session_id = str(uuid.uuid4())
+    st.session_state.messages = []
+    st.rerun()
+
+  st.markdown("---")
   st.header("📂 Vos Documents")
   fichiers_uploadees = st.file_uploader(
       "Déposez vos fichiers (PDF, TXT, DOCX, XLSX)",
@@ -132,24 +166,81 @@ with st.sidebar:
       accept_multiple_files=True,
   )
 
-  if st.button("🔄 Effacer la discussion"):
-    st.session_state.messages = []
-    st.rerun()
+  # Récupération de la liste des fichiers stockés pour cet utilisateur
+  fichiers_stockes = lister_fichiers_utilisateur(user_id)
 
-# Extraction du texte
+  if fichiers_stockes:
+    st.markdown("**Fichiers enregistrés :**")
+    for fichier in fichiers_stockes:
+      nom_fichier = fichier.get("name")
+      if nom_fichier and nom_fichier != ".emptyFolderPlaceholder":
+        col_nom, col_suppr = st.columns([0.8, 0.2])
+        with col_nom:
+          st.text(f"📄 {nom_fichier}")
+        with col_suppr:
+          if st.button("❌", key=f"del_{nom_fichier}", help="Supprimer"):
+            supprimer_fichier_supabase(user_id, nom_fichier)
+            st.rerun()
+
+  st.markdown("---")
+  st.subheader("📜 Mes discussions")
+
+  # Liste des conversations précédentes
+  conversations = charger_conversations_utilisateur(user_id)
+  for conv in conversations:
+    est_active = conv["session_id"] == st.session_state.current_session_id
+    prefixe = "💬 " if not est_active else "▶️ "
+
+    if st.button(
+        f"{prefixe}{conv['titre']}",
+        key=conv["session_id"],
+        use_container_width=True,
+    ):
+      st.session_state.current_session_id = conv["session_id"]
+      st.session_state.messages = charger_messages_session(
+          user_id, conv["session_id"]
+      )
+      st.rerun()
+
+# Traitement des textes (depuis l'upload direct ou le stockage)
 texte_global = ""
+textes = []
+
+# 1. Traitement direct des fichiers en cours d'upload dans le widget
 if fichiers_uploadees:
-  textes = []
   for f in fichiers_uploadees:
     try:
+      uploader_fichier_supabase(user_id, f)
+      f.seek(0)
       contenu = extraire_texte_fichier(f)
       textes.append(contenu)
     except Exception as e:
-      st.error(f"Erreur {f.name} : {e}")
-  texte_global = "\n\n".join(textes)
-  st.sidebar.success(f"{len(fichiers_uploadees)} document(s) prêt(s)")
+      st.error(f"Erreur traitement {f.name} : {e}")
 
-# Affichage de l'historique des messages
+# 2. Récupération des fichiers déjà enregistrés dans le stockage Supabase
+if fichiers_stockes:
+  for fichier in fichiers_stockes:
+    nom_fichier = fichier.get("name")
+    if nom_fichier and nom_fichier != ".emptyFolderPlaceholder":
+      if not fichiers_uploadees or not any(
+          f.name == nom_fichier for f in fichiers_uploadees
+      ):
+        file_bytes = telecharger_texte_fichier_supabase(user_id, nom_fichier)
+        if file_bytes:
+          file_obj = io.BytesIO(file_bytes)
+          file_obj.name = nom_fichier
+          try:
+            contenu = extraire_texte_fichier(file_obj)
+            textes.append(contenu)
+          except Exception:
+            pass
+
+if textes:
+  texte_global = "\n\n".join(textes)
+  nb_total = len(textes)
+  st.sidebar.success(f"{nb_total} document(s) actif(s)")
+
+# Affichage des messages
 for message in st.session_state.messages:
   with st.chat_message(message["role"]):
     st.markdown(message["content"])
@@ -158,19 +249,21 @@ for message in st.session_state.messages:
         for idx, chunk in enumerate(message["contexte"], 1):
           st.info(f"**Extrait {idx} :** {chunk}")
 
-# Zone de saisie du Chat
+# Zone de saisie
 if question := st.chat_input("Posez votre question sur les documents..."):
   if not texte_global:
     st.warning("Veuillez d'abord charger au moins un fichier dans la barre latérale.")
   else:
-    # 1. Enregistrer et afficher la question
+    # Enregistrement utilisateur
     st.session_state.messages.append({"role": "user", "content": question})
-    sauvegarder_message(user_id, "user", question)
+    sauvegarder_message(
+        user_id, st.session_state.current_session_id, "user", question
+    )
 
     with st.chat_message("user"):
       st.markdown(question)
 
-    # 2. Générer et afficher la réponse du bot
+    # Réponse de l'assistant
     with st.chat_message("assistant"):
       with st.spinner("Analyse et recherche des réponses..."):
         resultat = pipeline.poser_question(
@@ -180,7 +273,6 @@ if question := st.chat_input("Posez votre question sur les documents..."):
             historique=st.session_state.messages[:-1],
         )
 
-        # Affichage avec effet de saisie progressive
         st.write_stream(iter([resultat["reponse"]]))
 
         if resultat["contexte"]:
@@ -188,17 +280,23 @@ if question := st.chat_input("Posez votre question sur les documents..."):
             for idx, chunk in enumerate(resultat["contexte"], 1):
               st.info(f"**Extrait {idx} :** {chunk}")
 
-        # Enregistrer la réponse
+        # Enregistrement assistant
         st.session_state.messages.append({
             "role": "assistant",
             "content": resultat["reponse"],
             "contexte": resultat["contexte"],
         })
-        sauvegarder_message(user_id, "assistant", resultat["reponse"])
+        sauvegarder_message(
+            user_id,
+            st.session_state.current_session_id,
+            "assistant",
+            resultat["reponse"],
+            resultat["contexte"],
+        )
 
+# Social links footer
 social_icons_html = """
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-
 <style>
   body { margin: 0; padding: 0; background-color: transparent; }
   .social-container { display: flex; justify-content: center; align-items: center; gap: 12px; padding: 10px 0; }
@@ -213,9 +311,8 @@ social_icons_html = """
   .social-btn.facebook:hover { background-color: #1877f2; color: #ffffff; box-shadow: 0 0 15px #1877f2; transform: translateY(-3px); }
   .social-btn.whatsapp:hover { background-color: #25d366; color: #ffffff; box-shadow: 0 0 15px #25d366; transform: translateY(-3px); }
 </style>
-
 <div class="social-container">
-  <a href="https://github.com/monnou2008-boop" target="_blank" class="social-btn github" title="GitHub"><i class="fab fa-github"></i></a>
+  <a href="https://github.com/melckior-mn" target="_blank" class="social-btn github" title="GitHub"><i class="fab fa-github"></i></a>
   <a href="https://www.linkedin.com/in/melckior-tatch%C3%A9gnon-monnou-bb8a3a396/" target="_blank" class="social-btn linkedin" title="LinkedIn"><i class="fab fa-linkedin-in"></i></a>
   <a href="https://web.facebook.com/mmelo2008" target="_blank" class="social-btn facebook" title="Facebook"><i class="fab fa-facebook-f"></i></a>
   <a href="https://wa.me/2290145582680" target="_blank" class="social-btn whatsapp" title="WhatsApp"><i class="fab fa-whatsapp"></i></a>
@@ -224,18 +321,29 @@ social_icons_html = """
 
 with st.sidebar:
   st.markdown("---")
-  st.markdown("<p style='text-align: center; color: #71717a; font-size: 13px; margin-bottom: 5px;'>Mes réseaux & contact</p>", unsafe_allow_html=True)
+  st.markdown(
+      "<p style='text-align: center; color: #71717a; font-size: 13px;"
+      " margin-bottom: 5px;'>Mes réseaux & contact</p>",
+      unsafe_allow_html=True,
+  )
   st.components.v1.html(social_icons_html, height=65)
+  st.markdown("""
+        <div style="margin-top: -15px; margin-bottom: 20px;">
+            <span style="font-size: 13px; color: #a1a1aa;">Développé par </span>
+            <strong style="font-size: 14px; color: #6366f1;">Melckior MONNOU</strong>
+        </div>
+  """, unsafe_allow_html=True)
   st.markdown(
       """
         <div style="text-align: center; font-size: 11px; color: #a1a1aa; margin-top: 10px; line-height: 1.5;">
             <p style="margin-bottom: 4px;">© 2026 ChatBot RAG. Tous droits réservés.</p>
             <p>
-                <a href="#" style="color: #6366f1; text-decoration: none;">CGU</a> • 
-                <a href="#" style="color: #6366f1; text-decoration: none;">Confidentialité</a> • 
-                <span style="color: #71717a;">Licence MIT</span>
+                <a href="https://github.com/melckior-mn/rag_project/blob/main/TERMS.md" target="_blank" style="color: #6366f1; text-decoration: none;">CGU</a> • 
+                <a href="https://github.com/melckior-mn/rag_project/blob/main/PRIVACY.md" target="_blank" style="color: #6366f1; text-decoration: none;">Confidentialité</a> • 
+                <a href="https://opensource.org/licenses/MIT" target="_blank" style="color: #6366f1; text-decoration: none;">Licence MIT</a>
             </p>
         </div>
     """,
       unsafe_allow_html=True,
   )
+  

@@ -7,3 +7,4 @@ python-docx
 openpyxl
 pandas
 python-dotenv
+supabase
