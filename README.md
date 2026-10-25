@@ -11,7 +11,7 @@ Un chatbot intelligent basé sur le RAG (Retrieval-Augmented Generation) permett
 ## 🛠️ Stack Technique
 - **Frontend / UI** : Streamlit
 - **Backend / DB / Auth / Storage** : Supabase
-- **IA / LLM** : OpenAI API (GPT-4o-mini)
+- **IA / LLM** : gemini-3.5-flash
 
 ## 📦 Installation en local
 
